@@ -31,6 +31,7 @@ var loadedModules = [
     require("./widget_selectioncontainer"),
     require("./widget_string"),
     require("./widget_controller"),
+    require("./widget_message")
 ];
 for (var i in loadedModules) {
     if (loadedModules.hasOwnProperty(i)) {
