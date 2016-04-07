@@ -35,7 +35,7 @@ class MessageWidget(DOMWidget):
     >>> display(hooked)
     >>> print('prints to output area')
     >>> with hooked:
-            print('prints to message widget')
+            display('prints to message widget')
     """
     _view_name = Unicode('MessageWidgetView').tag(sync=True)
     _model_name = Unicode('MessageWidgetModel').tag(sync=True)
@@ -55,7 +55,7 @@ class MessageWidget(DOMWidget):
     # The list of messages stored by the hook when activated
     # (in context).
     #
-    _stored_messages = List()
+    stored_messages = List().tag(sync=True)
 
     @default('_message_hook')
     def _message_hook_default(self):
@@ -67,6 +67,7 @@ class MessageWidget(DOMWidget):
 
     def clear_output(self, *args, **kwargs):
         with self:
+            self.clear()
             clear_output(*args, **kwargs)
 
     def __enter__(self):
@@ -80,7 +81,7 @@ class MessageWidget(DOMWidget):
         Called when exiting MessageWidget context manager.
         """
         if tp is not None:
-            # Exception occurred... log and continue.
+            # TODO : Exception occurred... log and continue.
             pass
 
         self._pub.unregister_hook(self._message_hook)
@@ -89,19 +90,16 @@ class MessageWidget(DOMWidget):
         """
         Clear the stored messages list.
         """
-        self._stored_messages = []
+        self.stored_messages = []
+        self.value = []
 
     def store(self, item):
         """
         Store an item in the stored messages list.
         """
         print('Item appended to message widget storage')
-        temp = self._stored_messages[:]
+        # TODO : get traitlets to fire on list append?
+        temp = self.stored_messages[:]
         temp.append(item)
-        self._stored_messages = temp
-    #
-    # XXX: DEBUG ONLY - DO NOT COMMIT
-    #
-    @observe('_stored_messages')
-    def _stored_messaged_changed(self, change):
-        print('Stored messages on MessageWidget is now: ' + str(self._stored_messages))
+        self.stored_messages = temp
+        self.value = temp

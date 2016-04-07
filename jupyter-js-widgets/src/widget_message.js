@@ -38,12 +38,13 @@ var MessageWidgetView = widget.DOMWidgetView.extend({
          this.el.removeChild(this.el.firstChild);
         }
 
-        let items = this.model.get('_stored_messages');
+        let items = this.model.get('stored_messages');
+        var el = this.el;
         _.each(items, function(item) {
           console.log('Iterating over STORED MESSAGES');
           var label = document.createElement('div');
-          label.textContent = item.toString();
-          this.el.appendChild(label);
+          label.textContent = item['content']['data']['text/plain'];
+          el.appendChild(label);
         });
     }
 });
