@@ -9,8 +9,9 @@ Represents a widget that can be used to intercept display messages.
 
 from .domwidget import DOMWidget
 import sys
+from io import StringIO
 from traitlets import (
-    Unicode, List, Instance, default, observe
+    Unicode, List, Instance, default, observe, Any
 )
 from IPython.display import clear_output
 from IPython import get_ipython
@@ -57,6 +58,11 @@ class MessageWidget(DOMWidget):
     #
     stored_messages = List().tag(sync=True)
 
+    #
+    # String buffer to catch stdout / stderr
+    #
+    _std_buffer = Any()
+
     @default('_message_hook')
     def _message_hook_default(self):
         return ZMQMessageHook(self._message_type, self.store)
@@ -64,6 +70,10 @@ class MessageWidget(DOMWidget):
     @default('_pub')
     def _pub_default(self):
         return get_ipython().display_pub
+
+    @default('_std_buffer')
+    def _std_buffer_default(self):
+        return StringIO()
 
     def clear_output(self, *args, **kwargs):
         with self:
@@ -77,6 +87,11 @@ class MessageWidget(DOMWidget):
         self._old_clear = self._pub.clear_output
         self._pub.clear_output = self.clear_output
 
+        self._old_stdout = sys.stdout
+        self._old_stderr = sys.stderr
+        sys.stdout = self._std_buffer
+        sys.stderr = self._std_buffer
+
     def __exit__(self, tp, value, tb):
         """
         Called when exiting MessageWidget context manager.
@@ -85,8 +100,14 @@ class MessageWidget(DOMWidget):
             # TODO : Exception occurred... log and continue.
             pass
 
-        self._pub.clear_output = self._old_clear
         self._pub.unregister_hook(self._message_hook)
+        self._pub.clear_output = self._old_clear
+        sys.stdout = self._old_stdout
+        sys.stderr = self._old_stderr
+
+        # TODO : remove this when rendermime working in frontend.
+        temp = {'content': {'data': {'text/plain': self._std_buffer.getvalue()}}}
+        self.store(temp)
 
     def clear(self):
         """
