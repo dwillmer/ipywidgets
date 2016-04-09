@@ -68,13 +68,14 @@ class MessageWidget(DOMWidget):
     def clear_output(self, *args, **kwargs):
         with self:
             self.clear()
-            clear_output(*args, **kwargs)
 
     def __enter__(self):
         """
         Called when entering MessageWidget context manager
         """
         self._pub.register_hook(self._message_hook)
+        self._old_clear = self._pub.clear_output
+        self._pub.clear_output = self.clear_output
 
     def __exit__(self, tp, value, tb):
         """
@@ -84,6 +85,7 @@ class MessageWidget(DOMWidget):
             # TODO : Exception occurred... log and continue.
             pass
 
+        self._pub.clear_output = self._old_clear
         self._pub.unregister_hook(self._message_hook)
 
     def clear(self):
