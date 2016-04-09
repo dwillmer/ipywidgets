@@ -97,7 +97,6 @@ class MessageWidget(DOMWidget):
         """
         Store an item in the stored messages list.
         """
-        print('Item appended to message widget storage')
         # TODO : get traitlets to fire on list append?
         temp = self.stored_messages[:]
         temp.append(item)

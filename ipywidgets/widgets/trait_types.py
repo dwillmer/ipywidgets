@@ -34,7 +34,7 @@ class EventfulDict(traitlets.Instance):
         """Create a EventfulDict trait type from a dict.
 
         The default value is created by doing
-        ``eventful.EvenfulDict(default_value)``, which creates a copy of the
+        ``eventful.EventfulDict(default_value)``, which creates a copy of the
         ``default_value``.
         """
         if default_value is None:
