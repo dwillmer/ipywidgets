@@ -107,14 +107,16 @@ class MessageWidget(DOMWidget):
         sys.stderr = self._old_stderr
 
         # TODO : remove this when rendermime working in frontend.
-        temp = {'content': {'data': {'text/plain': self._std_buffer.getvalue()}}}
-        self.store(temp)
+        std = self._std_buffer.getvalue()
+        if std:
+            temp = {'content': {'data': {'text/plain': self._std_buffer.getvalue()}}}
+            self.store(temp)
+            self._std_buffer.truncate(0)
 
     def clear(self):
         """
         Clear the stored messages list.
         """
-        self._std_buffer.truncate(0)
         self.stored_messages = []
         self.value = []
 
