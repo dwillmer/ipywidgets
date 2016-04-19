@@ -91,6 +91,7 @@ class MessageWidget(DOMWidget):
         self._old_stderr = sys.stderr
         sys.stdout = self._std_buffer
         sys.stderr = self._std_buffer
+        return self
 
     def __exit__(self, tp, value, tb):
         """
@@ -113,6 +114,7 @@ class MessageWidget(DOMWidget):
         """
         Clear the stored messages list.
         """
+        self._std_buffer.truncate(0)
         self.stored_messages = []
         self.value = []
 
