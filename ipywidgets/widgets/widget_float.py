@@ -133,7 +133,7 @@ class FloatSlider(_BoundedFloat):
     _range = Bool(False, help="Display a range selector").tag(sync=True)
     readout = Bool(True, help="Display the current value of the slider next to it.").tag(sync=True)
     slider_color = Color(None, allow_none=True).tag(sync=True)
-    continuous_update = Bool(True, help="Update the value of the widget as the user is sliding the slider.").tag(sync=True)
+    continuous_update = Bool(True, help="Update the value of the widget as the user is holding the slider.").tag(sync=True)
 
 
 @register('Jupyter.FloatProgress')
@@ -211,19 +211,21 @@ class _BoundedFloatRange(_FloatRange):
     def _validate_bounds(self, proposal):
         trait = proposal['trait']
         new = proposal['value']
-        if trait.name == 'min' and new > self.lower:
-            raise TraitError('setting min > lower')
-        if trait.name == 'max' and new < self.upper:
-            raise TraitError('setting max < upper')
+        if trait.name == 'min' and new > self.max:
+            raise TraitError('setting min > max')
+        if trait.name == 'max' and new < self.min:
+            raise TraitError('setting max < min')
+        if trait.name == 'min':
+            self.value = (max(new, self.value[0]), max(new, self.value[1]))
+        if trait.name == 'max':
+            self.value = (min(new, self.value[0]), min(new, self.value[1]))
         return new
 
     @validate('value')
     def _validate_value(self, proposal):
         lower, upper = super(_BoundedFloatRange, self)._validate_value(proposal)
-        if lower < self.min:
-            raise TraitError('setting lower < min')
-        if upper > self.max:
-            raise TraitError('setting upper > max')
+        lower, upper = min(lower, self.max), min(upper, self.max)
+        lower, upper = max(lower, self.min), max(upper, self.min)
         return lower, upper
 
 

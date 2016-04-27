@@ -8,6 +8,8 @@ var widgets = require("jupyter-js-widgets");
 var html2canvas = require("html2canvas");
 var progressModal = require("./progress-modal");
 var saveState = require("./save_state");
+var embedWidgets = require("./embed_widgets");
+var version = require("../package.json").version;
 
 
 // Work around for a logging bug, reported in https://github.com/niklasvh/html2canvas/issues/543
@@ -74,9 +76,7 @@ var WidgetManager = function (comm_manager, notebook) {
             // Load the initial state of the widget manager if a load callback was
             // registered.
             if (WidgetManager._load_callback) {
-                that.clear_state(true).then(function () {
-                    return WidgetManager._load_callback.call(that);
-                }).then(function(state) {
+                WidgetManager._load_callback.call(that).then(function(state) {
                     that.set_state(state);
                 }).catch(widgets.reject('Error loading widget manager state', true));
             }
@@ -168,7 +168,7 @@ WidgetManager.set_state_callbacks = function (load_callback, save_callback, opti
      */
     WidgetManager._load_callback = load_callback;
     WidgetManager._save_callback = save_callback;
-    WidgetManager._get_state_options = options;
+    WidgetManager._get_state_options = options || {};
 
     // Use the load callback to immediately load widget states.
     WidgetManager._managers.forEach(function(manager) {
@@ -189,12 +189,21 @@ WidgetManager.set_state_callbacks = function (load_callback, save_callback, opti
 var url = [window.location.protocol, '//', window.location.host, window.location.pathname].join('');
 var key = 'widgets:' + url;
 WidgetManager.set_state_callbacks(function() {
-    if (localStorage[key]) {
-        return JSON.parse(localStorage[key]);
+    if (Jupyter.notebook.metadata.widgets) {
+        return Promise.resolve(Jupyter.notebook.metadata.widgets.state);
     }
-    return {};
+    return Promise.resolve({});
 }, function(state) {
-    localStorage[key] = JSON.stringify(state);
+    Jupyter.notebook.metadata.widgets = {
+
+        // Persisted widget state version
+        version: version,
+
+        // Only persist the views of the widget
+        state: _.mapObject(state, function(widgetState) {
+            return _.pick(widgetState, 'views');
+        })
+    };
 });
 
 WidgetManager.prototype._handle_display_view = function (view) {
@@ -258,6 +267,7 @@ WidgetManager.prototype._init_menu = function() {
 
     widgetsSubmenu.appendChild(this._createMenuItem('Save notebook with snapshots', this.buildSnapshotsAction));
     widgetsSubmenu.appendChild(this._createMenuItem('Download widget state', saveState.action));
+    widgetsSubmenu.appendChild(this._createMenuItem('Embed widgets', embedWidgets.action));
 };
 
 /**
@@ -370,60 +380,20 @@ WidgetManager.prototype.updateSnapshots = function() {
 
     // Wait for the progress modal to show before continuing
     return this.progressModal.show().then(function() {
-
         // Disable overflow to prevent the document from having elements
         // that are scrolled out of visibility.
         site.style.overflow = 'visible';
         document.body.style.overflow = 'hidden';
-
         // Render the widgets of each cell.
-        var progress = 0;
-        var renderPromise = Promise.resolve();
+        that._progress = 0;
         var cells = Jupyter.notebook.get_cells();
-        cells.forEach(function(cell, index) {
-            renderPromise = renderPromise.then(function() {
-                var widgetSubarea = cell.element[0].querySelector(".widget-subarea");
-                if (widgetSubarea && widgetSubarea.children.length > 0) {
-
-                    return that.progressModal.setText(
-                        'Rendering widget ' + String(index + 1) + '/' + String(cells.length) + ' ...'
-                    ).then(function() {
-                        return new Promise(function(resolve) {
-                            html2canvas(widgetSubarea, {
-                                onrendered: function(canvas) {
-
-                                    // Save the screenshot of the canvas to the widget-subarea
-                                    var mimetype = "image/png";
-                                    widgetSubarea.widgetSnapshot = {
-                                        mimetype: mimetype,
-                                        data: canvas.toDataURL(mimetype)
-                                    };
-
-                                    resolve();
-                                }
-                            });
-                        });
-                    }).then(function() {
-                        return that.progressModal.setValue(++progress/cells.length);
-                    });
-                } else {
-                    if (widgetSubarea && widgetSubarea.widgetSnapshot) {
-                        delete widgetSubarea.widgetSnapshot;
-                    }
-                    return that.progressModal.setValue(++progress/cells.length);
-                }
-            });
-        });
-
+        return that._sequentialPromise(cells.map(that._updateCellSnapshots.bind(that)));
+    }).then(function() {
         // When all of the rendering is complete, re-enable scrolling in the
         // notebook.
-        return renderPromise.then(function() {
-            site.style.overflow = '';
-            document.body.style.overflow = '';
-        });
-
-    // When the entire process has completed, hide the progress modal.
-    }).then(function() {
+        site.style.overflow = '';
+        document.body.style.overflow = '';
+        // When the entire process has completed, hide the progress modal.
         return that.progressModal.hide();
     }).then(function() {
         // Reset the values of the modal
@@ -434,6 +404,144 @@ WidgetManager.prototype.updateSnapshots = function() {
         Jupyter.menubar.actions.get('jupyter-notebook:save-notebook').handler({notebook: Jupyter.notebook});
     }).catch(widgets.reject('Could not create widget snapshots and save the notebook', true));
 };
+
+/**
+ * Update the widget snapshots for a single cell
+ * @param  {object} cell
+ * @param  {number} index - of the cell
+ * @return {Promise}
+ */
+WidgetManager.prototype._updateCellSnapshots = function(cell, index) {
+    var that = this;
+    var widgetSubarea = cell.element[0].querySelector(".widget-subarea");
+    var cells = Jupyter.notebook.get_cells();
+    if (!(widgetSubarea && widgetSubarea.children.length > 0)) {
+        if (widgetSubarea && widgetSubarea.widgetSnapshot) {
+            delete widgetSubarea.widgetSnapshot;
+        }
+        return that.progressModal.setValue(++that._progress/cells.length);
+    }
+
+    return that.progressModal.setText(
+        'Rendering widget ' + String(index + 1) + '/' + String(cells.length) + ' ...'
+    ).then(function() {
+        return Promise.all([
+            that._rasterizeEl(widgetSubarea),
+            that._getCellWidgetStates(cell, index),
+        ]);
+    }).then(function(results) {
+        var canvas = results[0];
+        var widgetState = results[1];
+        // Remove URL information, so only the b64 encoded data
+        // exists, because that's what the notebook likes.
+        var imageMimetype = 'image/png';
+        var imageDataUrl = canvas.toDataURL(imageMimetype);
+        var imageData = imageDataUrl.split(',').slice(-1)[0];
+
+        // Create a mime bundle.
+        var bundle = {};
+        bundle[imageMimetype] = imageData;
+        bundle['text/html'] = widgets.generateEmbedScript(widgetState, imageDataUrl);
+        widgetSubarea.widgetSnapshot = bundle;
+    }).then(function() {
+        return that.progressModal.setValue(++that._progress/cells.length);
+    });
+};
+
+WidgetManager.prototype._getCellWidgetStates = function(cell, index) {
+    var that = this;
+    var modelIds = Object.keys(this._models);
+    return Promise.all(modelIds.map(function(modelId) {
+        return that._models[modelId].then(function(model) {
+            return widgets.resolvePromisesDict(model.views).then(function(views) {
+                if (Object.keys(views).some(function(k) {
+                    return views[k].options.cell_index == index;
+                })) {
+                    return that._traverseWidgetTree(model)
+                        .map(function(widget) {
+                            return widget.get_state(true);
+                        });
+                }
+                return [null];
+            });
+        });
+    })).then(function(states) {
+        return states
+            .reduce(function(a, b) { return a.concat(b); }, [])
+            .filter(function(state) { return state !== null; });
+    });
+};
+
+WidgetManager.prototype._traverseWidgetTree = function(parentWidget, cache) {
+    // Setup a cache if it doesn't already exist
+    if (!cache) {
+        cache = {};
+    }
+
+    // Don't continue if this widget has already been traversed
+    if (parentWidget.id in cache) {
+        return [];
+    }
+
+    // Remember that this widget has been traversed
+    cache[parentWidget.id] = true;
+
+    // Traverse the parent widget's state for child widgets
+    var state = parentWidget.get_state(true);
+    var subWidgets = this._traverseWidgetState(state);
+    var that = this;
+    return _.flatten(subWidgets.map(function(subWidget) {
+        return that._traverseWidgetTree(subWidget, cache);
+    })).concat([ parentWidget ]);
+};
+
+WidgetManager.prototype._traverseWidgetState = function(state) {
+    var that = this;
+    if (state instanceof widgets.WidgetModel) {
+        return [state];
+    } else if (_.isArray(state)) {
+        return _.flatten(state.map(this._traverseWidgetState.bind(this)));
+    } else if (state instanceof Object) {
+        var states = [];
+        _.each(state, function(value, key) {
+            states.push(that._traverseWidgetState(value));
+        });
+        return _.flatten(states);
+    } else {
+        return [];
+    }
+};
+
+/**
+ * Create a sequentially executed promise chain from an array of promises.
+ * @param  {Array<Promise>} promises
+ * @return {Promise}
+ */
+WidgetManager.prototype._sequentialPromise = function(promises) {
+    var chain = Promise.resolve();
+    promises.forEach(function(promise) {
+        chain = chain.then(function() {
+            return promise;
+        });
+    });
+    return chain;
+};
+
+/**
+ * Rasterize an HTMLElement to and HTML5 canvas
+ * @param  {HTMLElement} el
+ * @return {Promise<HTMLCanvasElement>}
+ */
+WidgetManager.prototype._rasterizeEl = function(el) {
+    return new Promise(function(resolve) {
+        html2canvas(el, {
+            onrendered: function(canvas) {
+                resolve(canvas);
+            }
+        });
+    });
+};
+
 
 /**
  * Render the widget views that are live as images and prepend them as
@@ -447,20 +555,9 @@ WidgetManager.prototype.prependSnapshots = function() {
     cells.forEach((function(cell) {
         var widgetSubarea = cell.element[0].querySelector(".widget-subarea");
         if (widgetSubarea && widgetSubarea.children.length > 0 && widgetSubarea.widgetSnapshot) {
-
-            // Get the last screenshot of the widget sub-area
-            var mimetype = widgetSubarea.widgetSnapshot.mimetype;
-            var screenshot = widgetSubarea.widgetSnapshot.data;
-
-            // Create a mime bundle for the screenshot. Remove
-            // URL information, so only the b64 encoded data
-            // exists, because that's what the notebook likes.
-            var data = {};
-            data[mimetype] = screenshot.split(',').slice(-1)[0];
-
             // Create an output for the screenshot.
             var output = {
-                data: data,
+                data: widgetSubarea.widgetSnapshot,
                 output_type: "display_data",
                 metadata: {isWidgetSnapshot: true}
             };
@@ -496,10 +593,12 @@ WidgetManager.prototype.deleteSnapshots = function() {
     }).bind(this));
 };
 
-WidgetManager.prototype._create_comm = function(comm_target_name, model_id, metadata) {
+WidgetManager.prototype._create_comm = function(comm_target_name, model_id, data) {
+    var that = this;
     return this._get_connected_kernel().then(function(kernel) {
-        if (metadata) {
-            return kernel.comm_manager.new_comm(comm_target_name, metadata, model_id);
+        if (data) {
+            return kernel.comm_manager.new_comm(comm_target_name, data,
+                                                that.callbacks(), {}, model_id);
         } else {
             return new Promise(function(resolve) {
                 requirejs(["services/kernels/comm"], function(comm) {

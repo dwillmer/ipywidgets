@@ -416,7 +416,7 @@ var WidgetModel = Backbone.Model.extend({
 }, {
     _deserialize_state: function(state, manager) {
         /**
-         * Returns a promised for the deserialized state. The second argument
+         * Returns a promise for the deserialized state. The second argument
          * is an instance of widget manager, which is required for the
          * deserialization of widget models.
          */

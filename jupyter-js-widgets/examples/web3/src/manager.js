@@ -1,6 +1,3 @@
-require('bootstrap/dist/css/bootstrap.css');
-require('jquery-ui/themes/smoothness/jquery-ui.min.css');
-
 const widgets = require('jupyter-js-widgets');
 
 export class WidgetManager extends widgets.ManagerBase {
@@ -20,6 +17,7 @@ export class WidgetManager extends widgets.ManagerBase {
         var that = this;
         return Promise.resolve(view).then(function(view) {
             that.el.appendChild(view.el);
+            view.trigger('displayed');
             view.on('remove', function() {
                 console.log('view removed', view);
             });
@@ -30,7 +28,7 @@ export class WidgetManager extends widgets.ManagerBase {
     _create_comm(targetName, id, metadata) {
         return this.commManager.new_comm(targetName, metadata, id);
     }
-    
+
     _get_comm_info() {
         return Promise.resolve({});
     }

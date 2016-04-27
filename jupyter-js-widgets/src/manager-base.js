@@ -9,6 +9,7 @@ var _ = require('underscore');
 var Backbone = require('backbone');
 var utils = require('./utils');
 
+
 //--------------------------------------------------------------------
 // ManagerBase class
 //--------------------------------------------------------------------
@@ -67,17 +68,23 @@ ManagerBase.prototype.display_view = function(msg, view, options) {
     throw new Error('Manager.display_view not implemented');
 };
 
-ManagerBase.prototype.loadClass = function(class_name, module_name, registry) {
-    return utils.loadClass(class_name, module_name, registry);
-};
-
 ManagerBase.prototype.setViewOptions = function(options) {
     /**
      * Modifies view options. Generally overloaded in custom widget manager
      * implementations.
      */
     return options || {};
-}
+};
+
+ManagerBase.prototype.require_error = function (success_callback) {
+    /**
+     * Takes a requirejs success handler and returns a requirejs error handler.
+     * The default implementation just throws the original error.
+     */
+    return function(err) {
+        throw err;
+    };
+};
 
 ManagerBase.prototype.create_view = function(model, options) {
     /**
@@ -179,6 +186,7 @@ ManagerBase.prototype.new_widget = function(options, serialized_state) {
 };
 
 /**
+<<<<<<< HEAD
  * Parse a version string
  * @param  {string} version i.e. '1.0.2dev' or '2.4'
  * @return {object} version object {major, minor, patch, dev}
@@ -197,6 +205,8 @@ ManagerBase.prototype._parseVersion = function(version) {
 };
 
 /**
+=======
+>>>>>>> 9af15cf4dace04bfbde809073c8b5eaa6028e077
  * Validate the version of the Javascript against the version requested by
  * the backend.
  * @return {Promise<Boolean>} Whether or not the versions are okay
@@ -205,33 +215,15 @@ ManagerBase.prototype.validateVersion = function() {
     return this._create_comm(this.version_comm_target_name, undefined, {}).then((function(comm) {
         return new Promise((function(resolve, reject) {
             comm.on_msg((function(msg) {
-                var validated = true;
-                var backendVersion = this._parseVersion(msg.content.data.version);
-                if (backendVersion) {
-                    var frontendVersion = this._parseVersion(version);
-                    if (frontendVersion.major !== backendVersion.major) {
-                        validated = false;
-                    }
-                    if (frontendVersion.minor < backendVersion.minor) {
-                        validated = false;
-                    }
-                    if (frontendVersion.patch < backendVersion.patch) {
-                        validated = false;
-                    }
-                    if (frontendVersion.dev && !backendVersion.dev) {
-                        if (!(frontendVersion.patch > backendVersion.patch ||
-                        frontendVersion.minor > backendVersion.minor)) {
-                            validated = false;
-                        }
-                    }
-                } else {
-                    validated = false;
-                }
+                var version = require('../package.json').version;
+                var requirement = msg.content.data.version;
+                var validated = semver.satisfies(version, requirement);
                 comm.send({'validated': validated});
-                if (validated) console.info('Widget backend and frontend versions are compatible');
+                if (validated) {
+                    console.info('Widget backend and frontend versions are compatible');
+                }
                 resolve(validated);
             }).bind(this));
-
             setTimeout(function() {
                 reject(new Error('Timeout while trying to cross validate the widget frontend and backend versions.'));
             }, 3000);
@@ -289,7 +281,7 @@ ManagerBase.prototype.new_model = function(options, serialized_state) {
                                        options.model_module,
                                        ManagerBase._model_types)
         .then(function(ModelType) {
-            return ModelType._deserialize_state(serialized_state || ModelType.prototype.defaults, that).then(function(attributes) {
+            return ModelType._deserialize_state(serialized_state || {}, that).then(function(attributes) {
                 var widget_model = new ModelType(that, model_id, options.comm, attributes);
                 widget_model.once('comm:close', function () {
                     delete that._models[model_id];
@@ -361,38 +353,32 @@ ManagerBase.prototype.get_state = function(options) {
                 var displayed_flag = !(options && options.only_displayed) || Object.keys(model.views).length > 0;
                 var live_flag = (options && options.not_live) || model.comm_live;
                 if (displayed_flag && live_flag) {
-                    state[model_id] = {
+                    state[model_id] = utils.resolvePromisesDict({
                         model_name: model.name,
                         model_module: model.module,
-                        state: model.get_state(options.drop_defaults),
-                        views: [],
-                    };
-
-                    // Get the views that are displayed *now*.
-                    (function(local_state) {
-                        model_promises.push(utils.resolvePromisesDict(model.views).then(function(model_views) {
-                            for (var id in model_views) {
-                                if (model_views.hasOwnProperty(id)) {
-                                    var view = model_views[id];
-                                    if (view.options !== undefined && view.options.root) {
-                                        local_state.views.push(view.options);
-                                    }
-                                }
-                            }
-                        }));
-                    })(state[model_id]);
+                        state: model.constructor._serialize_state(model.get_state(options.drop_defaults), that),
+                        views: utils.resolvePromisesDict(model.views).then(function (views) {
+                            return _.values(views).filter(function(view) {
+                                    return view.options !== undefined && view.options.root;
+                                }).map(function(view) {
+                                    return view.options;
+                                });
+                        })
+                    });
                 }
             }
         }
-        return Promise.all(model_promises).then(function() { return state; });
+        return utils.resolvePromisesDict(state);
     }).catch(utils.reject('Could not get state of widget manager', true));
 };
 
-ManagerBase.prototype.set_state = function(state) {
+ManagerBase.prototype.set_state = function(state, displayOptions) {
     /**
      * Set the widget manager state.
      *
-     * Reconstructs all of the widget models and attempts to redisplay them..
+     * Reconstructs all of the widget models in the state, merges that with the
+     * current manager state, and then attempts to redisplay the widgets in the
+     * state.
      */
     var that = this;
 
@@ -400,9 +386,15 @@ ManagerBase.prototype.set_state = function(state) {
     var all_models = that._get_comm_info().then(function(live_comms) {
         return Promise.all(_.map(Object.keys(state), function (model_id) {
 
-            // If the model has already been created, return it.
+            // If the model has already been created, set it's state and then
+            // return it.
             if (that._models[model_id]) {
-                return that._models[model_id];
+                return that._models[model_id].then(function(model) {
+                    return model.constructor._deserialize_state(state[model_id].state || {}, that).then(function(attributes) {
+                        model.set_state(attributes);
+                        return model;
+                    });
+                });
             }
 
             if (live_comms.hasOwnProperty(model_id)) {  // live comm
@@ -445,6 +437,5 @@ ManagerBase.prototype._get_comm_info = function() {
 };
 
 module.exports = {
-    'ManagerBase': ManagerBase,
-    'version': version
+    ManagerBase: ManagerBase
 };

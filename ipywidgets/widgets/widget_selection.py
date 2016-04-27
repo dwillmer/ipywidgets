@@ -25,7 +25,7 @@ class _Selection(DOMWidget):
     """Base class for Selection widgets
 
     ``options`` can be specified as a list or dict. If given as a list,
-    it will be transformed to a dict of the form ``{str(value):value}``.
+    it will be transformed to a dict of the form ``{unicode_type(value): value}``.
 
     When programmatically setting the value, a reverse lookup is performed
     among the options to check that the value is valid. The reverse lookup uses
@@ -64,12 +64,12 @@ class _Selection(DOMWidget):
         # Return a list of key-value pairs where the keys are strings
         # If x is a dict, convert it to list format.
         if isinstance(x, (OrderedDict, dict)):
-            return [(str(k), v) for k, v in x.items()]
+            return [(unicode_type(k), v) for k, v in x.items()]
 
         # If x is an ordinary list, use the option values as names.
         for y in x:
             if not isinstance(y, (list, tuple)) or len(y) < 2:
-                return [(str(i), i) for i in x]
+                return [(unicode_type(i), i) for i in x]
 
         # Value is already in the correct format.
         return x
@@ -115,7 +115,7 @@ class _MultipleSelection(_Selection):
 
     As with ``_Selection``, ``options`` can be specified as a list or dict. If
     given as a list, it will be transformed to a dict of the form
-    ``{str(value): value}``.
+    ``{unicode_type(value): value}``.
 
     Despite its name, the ``value`` attribute is a tuple, even if only a single
     option is selected.
@@ -194,11 +194,12 @@ class SelectionSlider(_Selection):
     _model_name = Unicode('SelectionSliderModel').tag(sync=True)
 
     orientation = CaselessStrEnum(
-        values=['horizontal', 'vertical'],
-        default_value='horizontal', allow_none=False, sync=True,
-        help="""Vertical or horizontal.""")
-    readout = Bool(True, sync=True,
-        help="""Display the current selected label next to the slider""")
+        values=['horizontal', 'vertical'], default_value='horizontal',
+        allow_none=False, help="Vertical or horizontal.").tag(sync=True)
+    readout = Bool(True,
+        help="Display the current selected label next to the slider").tag(sync=True)
+    continuous_update = Bool(True,
+        help="Update the value of the widget as the user is holding the slider.").tag(sync=True)
 
 
 @register('Jupyter.SelectMultiple')
